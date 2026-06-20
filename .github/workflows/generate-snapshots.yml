@@ -1,13 +1,5 @@
 name: Generate Prerender Snapshots
 
-# Runs every Sunday at 03:00 UTC. Weekly, not nightly — your marketing
-# pages don't change often enough to justify daily egress cost, and
-# crawlers seeing content that's up to 7 days stale is a fine tradeoff
-# against the alternative (crawlers seeing nothing at all).
-#
-# You can also trigger it manually any time from the GitHub Actions tab
-# (workflow_dispatch below) — e.g. right after you ship a homepage/pricing
-# copy change, so the snapshot doesn't wait a week to catch up.
 on:
   schedule:
     - cron: '0 3 * * 0'
@@ -23,7 +15,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
 
       - name: Install dependencies
         run: npm install playwright @supabase/supabase-js
