@@ -1,82 +1,38 @@
-// generate-snapshots.js
-//
-// Run with: node generate-snapshots.js
-// Requires: npm install playwright @supabase/supabase-js
-//           npx playwright install chromium
-//
-// Recommended: run this on a schedule (nightly cron via GitHub Actions,
-// or manually after every production deploy) so snapshots stay fresh.
-// Crawlers seeing slightly-stale content for a few hours is a fine
-// tradeoff; crawlers seeing NOTHING is the problem this solves.
+name: Generate Prerender Snapshots
 
-const { chromium } = require('playwright');
-const { createClient } = require('@supabase/supabase-js');
+# Runs every Sunday at 03:00 UTC. Weekly, not nightly — your marketing
+# pages don't change often enough to justify daily egress cost, and
+# crawlers seeing content that's up to 7 days stale is a fine tradeoff
+# against the alternative (crawlers seeing nothing at all).
+#
+# You can also trigger it manually any time from the GitHub Actions tab
+# (workflow_dispatch below) — e.g. right after you ship a homepage/pricing
+# copy change, so the snapshot doesn't wait a week to catch up.
+on:
+  schedule:
+    - cron: '0 3 * * 0'
+  workflow_dispatch: {}
 
-const SITE_BASE_URL = 'https://authoritystudioai.com';
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const SNAPSHOT_BUCKET = 'prerendered-pages';
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
 
-// Keep this list in sync with App.jsx's public routes and the
-// SNAPSHOT_ROUTES map in prerender-proxy/index.ts.
-const ROUTES = [
-  { path: '/', key: 'home.html' },
-  { path: '/pricing', key: 'pricing.html' },
-  { path: '/authority-engine', key: 'authority-engine.html' },
-  { path: '/score', key: 'score.html' },
-  { path: '/voice-studio', key: 'voice-studio.html' },
-  { path: '/geo-audit', key: 'geo-audit.html' },
-  { path: '/linkedin-post-analyzer', key: 'linkedin-post-analyzer.html' },
-  { path: '/about', key: 'about.html' },
-  { path: '/contact', key: 'contact.html' },
-];
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
 
-async function main() {
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-    console.error('Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY env vars.');
-    process.exit(1);
-  }
+      - name: Install dependencies
+        run: npm install playwright @supabase/supabase-js
 
-  const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
-  const browser = await chromium.launch();
-  const page = await browser.newPage();
+      - name: Install headless Chromium
+        run: npx playwright install --with-deps chromium
 
-  let successCount = 0;
-  let failCount = 0;
-
-  for (const route of ROUTES) {
-    const url = SITE_BASE_URL + route.path;
-    try {
-      console.log('Rendering', url);
-      await page.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
-      // Give react-helmet and any async data fetches a moment to settle
-      // beyond networkidle (charts/animations can trail slightly).
-      await page.waitForTimeout(1500);
-      const html = await page.content();
-
-      const { error } = await supabase.storage
-        .from(SNAPSHOT_BUCKET)
-        .upload(route.key, html, {
-          contentType: 'text/html; charset=utf-8',
-          upsert: true,
-        });
-
-      if (error) {
-        console.error('Upload failed for', route.key, error.message);
-        failCount++;
-      } else {
-        console.log('Snapshot saved:', route.key, '(' + html.length + ' chars)');
-        successCount++;
-      }
-    } catch (err) {
-      console.error('Render failed for', url, err.message);
-      failCount++;
-    }
-  }
-
-  await browser.close();
-  console.log('Done. ' + successCount + ' succeeded, ' + failCount + ' failed.');
-  if (failCount > 0) process.exit(1);
-}
-
-main();
+      - name: Run snapshot generator
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: node generate-snapshots.js
