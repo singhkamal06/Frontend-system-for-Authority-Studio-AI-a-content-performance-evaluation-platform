@@ -182,20 +182,41 @@ async function cmdNew(topic, auto) {
     console.log('⚡  Auto mode — proceeding without prompt.\n');
   }
 
-  // ── Step 4: Generate full article body ────────────────────────────────────
+  // ── Step 4: Generate full article body — with automatic retry on underwrite ──
   console.log('✍️   Generating full article body...\n');
 
-  const body = await callOpenAI({
-    system: systemPromptWriter(),
-    user: buildWriterPrompt(plan),
-    max_tokens: 4000,
-    json: false,
-  });
+  const MAX_ATTEMPTS = 3;
+  let body = '';
+  let wordCount = 0;
 
-  const wordCount = countWords(body);
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const userPrompt = attempt === 1
+      ? buildWriterPrompt(plan)
+      : buildWriterPrompt(plan) + `\n\nIMPORTANT: Your previous attempt was only ${wordCount} words, well under the 1100 minimum. This time, develop each of the 5 sections more fully — add a second worked example or a more detailed walkthrough of the mechanism in each section. Do not summarize; expand.`;
+
+    body = await callOpenAI({
+      system: systemPromptWriter(),
+      user: userPrompt,
+      max_tokens: 4500,
+      json: false,
+    });
+
+    wordCount = countWords(body);
+
+    if (wordCount >= MIN_WORD_COUNT) {
+      console.log(`✅  Attempt ${attempt}: ${wordCount} words — meets minimum.\n`);
+      break;
+    }
+
+    console.warn(`⚠️   Attempt ${attempt}: only ${wordCount} words (minimum ${MIN_WORD_COUNT}).`);
+    if (attempt < MAX_ATTEMPTS) {
+      console.warn('    Retrying with explicit expansion instruction...\n');
+    }
+  }
+
   if (wordCount < MIN_WORD_COUNT) {
-    console.error(`❌  Article rejected: only ${wordCount} words (minimum ${MIN_WORD_COUNT}).`);
-    console.error('    No file written. Run the command again — the model sometimes underwrites on a given attempt.\n');
+    console.error(`❌  Article rejected after ${MAX_ATTEMPTS} attempts: only ${wordCount} words (minimum ${MIN_WORD_COUNT}).`);
+    console.error('    No file written. The topic may need a richer outline — consider rephrasing it.\n');
     process.exit(1);
   }
 
@@ -409,7 +430,7 @@ Writing rules — enforce every one, no exceptions:
 
 8. Write in a direct, expert voice. Short sentences. No hedging language ("can help," "may improve," "tends to"). State things directly: "this does X," not "this can help with X."
 
-9. Minimum 1100 words. Every paragraph must contain a specific claim, number, or example — if a paragraph could apply to any company in any industry, delete it and replace it with a paragraph that could only be about this specific topic.
+9. Minimum 1100 words, structured as roughly 200-240 words per H2 section across 5 sections, plus a 60-80 word opening paragraph before the first heading. Treat each section as needing its own named mechanism or worked example developed in full — not summarized in one sentence. Underwriting a section because the point "seems simple" is not acceptable; expand with a fuller worked example instead.
 
 10. Format with clear H2 subheadings matching the approved outline. No H1.
 
