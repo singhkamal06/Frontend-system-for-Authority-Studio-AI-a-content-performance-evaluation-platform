@@ -182,41 +182,46 @@ async function cmdNew(topic, auto) {
     console.log('⚡  Auto mode — proceeding without prompt.\n');
   }
 
-  // ── Step 4: Generate full article body — with automatic retry on underwrite ──
-  console.log('✍️   Generating full article body...\n');
+  // ── Step 4: Generate full article body — section by section, deterministic ──
+  // Single-call generation was unreliable (model undershot 1100 words repeatedly
+  // even with retries). Generating per-section guarantees total length, because
+  // each section call only needs to hit ~180 words, which the model reliably does.
+  console.log('✍️   Generating article body, section by section...\n');
 
-  const MAX_ATTEMPTS = 3;
-  let body = '';
-  let wordCount = 0;
+  const opening = await generateSection({
+    plan,
+    sectionLabel: 'Opening paragraph',
+    instruction: `Write the opening paragraph only — 70-90 words. Make a specific, contestable claim about "${plan.targetQuery}". Do not use a heading. Do not summarize what the article will cover — start directly with the claim.`,
+    minWords: 60,
+  });
 
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    const userPrompt = attempt === 1
-      ? buildWriterPrompt(plan)
-      : buildWriterPrompt(plan) + `\n\nIMPORTANT: Your previous attempt was only ${wordCount} words, well under the 1100 minimum. This time, develop each of the 5 sections more fully — add a second worked example or a more detailed walkthrough of the mechanism in each section. Do not summarize; expand.`;
-
-    body = await callOpenAI({
-      system: systemPromptWriter(),
-      user: userPrompt,
-      max_tokens: 4500,
-      json: false,
+  const sections = [];
+  for (let i = 0; i < (plan.outline || []).length; i++) {
+    const heading = plan.outline[i];
+    const sectionBody = await generateSection({
+      plan,
+      sectionLabel: `Section ${i + 1}: ${heading}`,
+      instruction: `Write the full section for the heading "## ${heading}". 180-230 words. Include the heading line itself. Develop one named mechanism, framework, or fully worked example in detail — do not summarize it in one sentence. Do not invent statistics or percentages. Do not use filler transitions.`,
+      minWords: 160,
     });
-
-    wordCount = countWords(body);
-
-    if (wordCount >= MIN_WORD_COUNT) {
-      console.log(`✅  Attempt ${attempt}: ${wordCount} words — meets minimum.\n`);
-      break;
-    }
-
-    console.warn(`⚠️   Attempt ${attempt}: only ${wordCount} words (minimum ${MIN_WORD_COUNT}).`);
-    if (attempt < MAX_ATTEMPTS) {
-      console.warn('    Retrying with explicit expansion instruction...\n');
-    }
+    sections.push(sectionBody);
   }
 
+  const closing = await generateSection({
+    plan,
+    sectionLabel: 'Closing paragraph',
+    instruction: `Write a closing paragraph only — 60-90 words. No heading. End with one specific, actionable next step the reader can do in the next 10 minutes. Do not write "start your journey" or generic calls to action.`,
+    minWords: 50,
+  });
+
+  const body = [opening, ...sections, closing].join('\n\n');
+  const wordCount = countWords(body);
+
+  console.log(`✅  Assembled article: ${wordCount} words across ${sections.length} sections.\n`);
+
   if (wordCount < MIN_WORD_COUNT) {
-    console.error(`❌  Article rejected after ${MAX_ATTEMPTS} attempts: only ${wordCount} words (minimum ${MIN_WORD_COUNT}).`);
-    console.error('    No file written. The topic may need a richer outline — consider rephrasing it.\n');
+    console.error(`❌  Article rejected: assembled body is only ${wordCount} words (minimum ${MIN_WORD_COUNT}).`);
+    console.error('    This should be rare with section-by-section generation. No file written.\n');
     process.exit(1);
   }
 
@@ -408,53 +413,26 @@ Internal link hrefs must be from this list only: /, /pricing, /authority-engine,
 }
 
 function systemPromptWriter() {
-  return `You are a world-class B2B content writer for Authority Studio AI. You write authoritative, specific, practical articles for LinkedIn professionals — founders, consultants, ghostwriters, executives.
+  return `You are a world-class B2B content writer for Authority Studio AI. You write authoritative, specific, practical content for LinkedIn professionals — founders, consultants, ghostwriters, executives.
 
-Writing rules — enforce every one, no exceptions:
+You will be asked to write ONE piece of an article at a time (an opening paragraph, one section, or a closing paragraph). Follow the specific instruction given exactly, including its word count range.
 
-1. Open with a specific, contestable claim — a sentence someone could disagree with. Never a definition. Never "X represents a measure of Y." Never a question. Never "In today's world" or "In the age of AI."
+Rules that apply to every piece you write:
 
-2. Every section must contain at least one of: a named mechanism/framework with a clear explanation of how it works, or a concrete illustrative scenario walked through step by step. Generic statements like "engagement matters" or "quality content performs better" are FORBIDDEN unless immediately followed by a named mechanism or worked example in the same paragraph.
+1. Never use vague intensifiers or filler hedges: "significantly," "various factors," "a range of," "essential," "crucial," "imagine," "akin to," "represents a measure of."
 
-2b. NEVER invent statistics, percentages, or study citations. Do not write "X% of professionals" or "studies show" or "increases engagement by Y%" unless that exact figure was given to you in the prompt. If you do not have a verified number, do not fabricate one — explain the mechanism or give a named, reasoned example instead. A named framework explained clearly is more credible and more useful than a fabricated statistic.
+2. Never invent statistics, percentages, or study citations. If you do not have a verified number, do not fabricate one — use a named mechanism or a clearly reasoned worked example instead.
 
-3. NEVER use vague intensifiers or filler hedges: "significantly," "various factors," "a range of," "essential," "crucial," "imagine," "akin to," "represents a measure of." If you catch yourself writing one of these, replace the sentence with a specific claim instead.
+3. Reference Authority Studio AI naturally only when it directly solves the specific problem being discussed in that section — never as a generic plug.
 
-4. Reference Authority Studio AI naturally — it earns its place by solving a specific problem stated earlier in the same paragraph, not as a generic plug.
+4. No filler transitions: no "Furthermore," "In conclusion," "It's worth noting," "Moreover," "In today's landscape."
 
-5. Target the specified search query in the first 60 words, naturally.
+5. Write in a direct, expert voice. Short sentences. No hedging language ("can help," "may improve," "tends to"). State things directly.
 
-6. No filler transitions: no "Furthermore," "In conclusion," "It's worth noting," "Moreover," "In today's landscape."
+6. Plain text or markdown paragraph only — no markdown code blocks, no extra commentary about what you're doing, just the requested content.
 
-7. End with one specific, actionable next step a reader can do in the next 10 minutes — not "start your journey" or "begin optimizing today."
-
-8. Write in a direct, expert voice. Short sentences. No hedging language ("can help," "may improve," "tends to"). State things directly: "this does X," not "this can help with X."
-
-9. Minimum 1100 words, structured as roughly 200-240 words per H2 section across 5 sections, plus a 60-80 word opening paragraph before the first heading. Treat each section as needing its own named mechanism or worked example developed in full — not summarized in one sentence. Underwriting a section because the point "seems simple" is not acceptable; expand with a fuller worked example instead.
-
-10. Format with clear H2 subheadings matching the approved outline. No H1.
-
-11. Do not use markdown code blocks. Use plain markdown headings (##) and paragraphs.
-
-12. Before finishing, mentally check: does the article contain at least 4 named mechanisms, frameworks, or fully worked concrete examples — with zero fabricated statistics? If not, revise until it does, then output the final version only.`;
+7. Hit the word count range given in the instruction. If a section is given 180-230 words, do not stop at 90 — develop the named mechanism or example fully with concrete, specific detail until you reach the target.`;
 }
-
-function buildWriterPrompt(plan) {
-  return `Write a full article using this approved plan.
-
-Target query: ${plan.targetQuery}
-Title: ${plan.title}
-Excerpt: ${plan.excerpt}
-
-Approved outline (use these as H2 subheadings in order):
-${(plan.outline || []).map((s, i) => `${i + 1}. ${s}`).join('\n')}
-
-Internal links to include naturally in the body:
-${(plan.internalLinks || []).map(l => `- Anchor: "${l.anchor}" → href: ${l.href}`).join('\n') || 'None specified'}
-
-Write the full article now. Start directly with the opening paragraph — do not repeat the title.`;
-}
-
 function buildArticleFile(article) {
   // Escape backticks and template literal syntax in body
   const safeBody = article.body
@@ -575,6 +553,41 @@ function normalizeQuery(q) {
     .filter(Boolean)
     .sort()
     .join(' ');
+}
+
+// ─── Section-by-section generation ─────────────────────────────────────────
+
+async function generateSection(opts) {
+  const plan = opts.plan;
+  const sectionLabel = opts.sectionLabel;
+  const instruction = opts.instruction;
+  const minWords = opts.minWords;
+
+  const MAX_SECTION_ATTEMPTS = 2;
+  let text = '';
+  let words = 0;
+
+  for (let attempt = 1; attempt <= MAX_SECTION_ATTEMPTS; attempt++) {
+    const userPrompt = `Article title: ${plan.title}\nTarget query: ${plan.targetQuery}\n\n${instruction}` +
+      (attempt > 1 ? `\n\nYour previous attempt was only ${words} words — too short. Expand the worked example with more concrete detail this time.` : '');
+
+    text = await callOpenAI({
+      system: systemPromptWriter(),
+      user: userPrompt,
+      max_tokens: 700,
+      json: false,
+    });
+
+    words = countWords(text);
+
+    if (words >= minWords) {
+      console.log(`  ${sectionLabel}: ${words} words`);
+      return text.trim();
+    }
+  }
+
+  console.log(`  ${sectionLabel}: ${words} words (under target, using as-is)`);
+  return text.trim();
 }
 
 function slugToVar(slug) {
