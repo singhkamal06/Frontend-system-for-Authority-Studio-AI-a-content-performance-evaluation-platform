@@ -194,7 +194,9 @@ async function cmdNew(topic, auto) {
 
   const wordCount = countWords(body);
   if (wordCount < MIN_WORD_COUNT) {
-    console.warn(`⚠️   Warning: body is only ${wordCount} words (minimum ${MIN_WORD_COUNT}). Consider regenerating.`);
+    console.error(`❌  Article rejected: only ${wordCount} words (minimum ${MIN_WORD_COUNT}).`);
+    console.error('    No file written. Run the command again — the model sometimes underwrites on a given attempt.\n');
+    process.exit(1);
   }
 
   // ── Step 5: Build article object ──────────────────────────────────────────
@@ -391,7 +393,9 @@ Writing rules — enforce every one, no exceptions:
 
 1. Open with a specific, contestable claim — a sentence someone could disagree with. Never a definition. Never "X represents a measure of Y." Never a question. Never "In today's world" or "In the age of AI."
 
-2. Every section must contain at least one of: a specific number, a named mechanism/framework, or a concrete before/after example. Generic statements like "engagement matters" or "quality content performs better" are FORBIDDEN without a specific number or named example attached in the same paragraph.
+2. Every section must contain at least one of: a named mechanism/framework with a clear explanation of how it works, or a concrete illustrative scenario walked through step by step. Generic statements like "engagement matters" or "quality content performs better" are FORBIDDEN unless immediately followed by a named mechanism or worked example in the same paragraph.
+
+2b. NEVER invent statistics, percentages, or study citations. Do not write "X% of professionals" or "studies show" or "increases engagement by Y%" unless that exact figure was given to you in the prompt. If you do not have a verified number, do not fabricate one — explain the mechanism or give a named, reasoned example instead. A named framework explained clearly is more credible and more useful than a fabricated statistic.
 
 3. NEVER use vague intensifiers or filler hedges: "significantly," "various factors," "a range of," "essential," "crucial," "imagine," "akin to," "represents a measure of." If you catch yourself writing one of these, replace the sentence with a specific claim instead.
 
@@ -411,7 +415,7 @@ Writing rules — enforce every one, no exceptions:
 
 11. Do not use markdown code blocks. Use plain markdown headings (##) and paragraphs.
 
-12. Before finishing, mentally check: does the article contain at least 5 specific numbers, named mechanisms, or concrete examples total? If not, it fails the quality bar — keep revising mentally until it does, then output the final version only.`;
+12. Before finishing, mentally check: does the article contain at least 4 named mechanisms, frameworks, or fully worked concrete examples — with zero fabricated statistics? If not, revise until it does, then output the final version only.`;
 }
 
 function buildWriterPrompt(plan) {
