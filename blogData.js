@@ -6,7 +6,10 @@ import articleWhatIsALinkedinAuthorityScore from './blog/articles/what-is-a-link
 import articleLinkedinPostAnalyzerToolsCompared from './blog/articles/linkedin-post-analyzer-tools-compared.js';
 import articleHowToBuildLinkedinAuthorityFromZero from './blog/articles/how-to-build-linkedin-authority-from-zero.js';
 
+import articleLinkedinAuthorityAnalysisServiceFeatures from './blog/articles/linkedin-authority-analysis-service-features.js';
+
 var articles = [
+  articleLinkedinAuthorityAnalysisServiceFeatures,
   articleWhatIsALinkedinAuthorityScore,
   articleLinkedinPostAnalyzerToolsCompared,
   articleHowToBuildLinkedinAuthorityFromZero,
