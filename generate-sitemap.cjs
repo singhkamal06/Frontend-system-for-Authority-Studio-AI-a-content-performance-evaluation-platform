@@ -13,7 +13,7 @@ const path = require('path');
 
 var SITE_BASE_URL  = 'https://authoritystudioai.com';
 var ARTICLES_DIR   = path.join(__dirname, 'blog', 'articles');
-var SITEMAP_PATH   = path.join(__dirname, 'public', 'sitemap.xml');
+var SITEMAP_PATH = path.join(__dirname, 'sitemap.xml');
 var today          = new Date().toISOString().slice(0, 10);
 
 // ── Static routes ─────────────────────────────────────────────────────────────
