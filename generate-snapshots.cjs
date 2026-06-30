@@ -1,93 +1,109 @@
-#!/usr/bin/env node
-// generate-sitemap.cjs
+// generate-snapshots.cjs
 //
-// Rebuilds public/sitemap.xml from static routes + all published blog articles.
-// Run manually or add as a step in weekly-draft.yml after --publish.
+// Run with: node generate-snapshots.cjs
+// Requires: npm install playwright @supabase/supabase-js
+//           npx playwright install chromium
 //
-// Usage: node generate-sitemap.cjs
+// Reads published article slugs dynamically from blog/articles/*.js
+// so new articles are snapshotted automatically without editing this file.
 
 'use strict';
 
+const { chromium } = require('playwright');
+const { createClient } = require('@supabase/supabase-js');
 const fs   = require('fs');
 const path = require('path');
 
-var SITE_BASE_URL  = 'https://authoritystudioai.com';
-var ARTICLES_DIR   = path.join(__dirname, 'blog', 'articles');
-var SITEMAP_PATH   = path.join(__dirname, 'public', 'sitemap.xml');
-var today          = new Date().toISOString().slice(0, 10);
+const SITE_BASE_URL          = 'https://authoritystudioai.com';
+const SUPABASE_URL           = process.env.SUPABASE_URL;
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const SNAPSHOT_BUCKET        = 'prerendered-pages';
 
-// ── Static routes ─────────────────────────────────────────────────────────────
-var staticUrls = [
-  { loc: '/',                       priority: '1.0', changefreq: 'daily'   },
-  { loc: '/signup',                  priority: '0.9', changefreq: 'weekly'  },
-  { loc: '/login',                   priority: '0.8', changefreq: 'weekly'  },
-  { loc: '/reset-password',          priority: '0.5', changefreq: 'monthly' },
-  { loc: '/about',                   priority: '0.8', changefreq: 'weekly'  },
-  { loc: '/contact',                 priority: '0.7', changefreq: 'weekly'  },
-  { loc: '/pricing',                 priority: '0.9', changefreq: 'weekly'  },
-  { loc: '/api-docs',                priority: '0.7', changefreq: 'weekly'  },
-  { loc: '/changelog',               priority: '0.6', changefreq: 'weekly'  },
-  { loc: '/authority-engine',        priority: '0.9', changefreq: 'weekly'  },
-  { loc: '/linkedin-post-analyzer',  priority: '0.9', changefreq: 'weekly'  },
-  { loc: '/voice-studio',            priority: '0.9', changefreq: 'weekly'  },
-  { loc: '/geo-audit',               priority: '0.9', changefreq: 'weekly'  },
-  { loc: '/privacy',                 priority: '0.3', changefreq: 'monthly' },
-  { loc: '/privacy_policy',          priority: '0.3', changefreq: 'monthly' },
-  { loc: '/terms',                   priority: '0.3', changefreq: 'monthly' },
-  { loc: '/terms_of_service',        priority: '0.3', changefreq: 'monthly' },
-  { loc: '/cookies',                 priority: '0.3', changefreq: 'monthly' },
-  { loc: '/score',                   priority: '0.8', changefreq: 'weekly'  },
-  { loc: '/blog',                    priority: '0.9', changefreq: 'daily'   },
-];
+// ── Dynamically collect published blog article routes ────────────────────────
+function getBlogRoutes() {
+  var articlesDir = path.join(__dirname, 'blog', 'articles');
+  if (!fs.existsSync(articlesDir)) return [];
+  return fs.readdirSync(articlesDir)
+    .filter(function(f) { return f.endsWith('.js'); })
+    .reduce(function(acc, file) {
+      var raw = fs.readFileSync(path.join(articlesDir, file), 'utf8');
+      var slugMatch   = raw.match(/slug:\s*'([^']*)'/);
+      var statusMatch = raw.match(/status:\s*'([^']*)'/);
+      if (slugMatch && statusMatch && statusMatch[1] === 'published') {
+        acc.push({
+          path: '/blog/' + slugMatch[1],
+          key:  'blog-' + slugMatch[1] + '.html',
+        });
+      }
+      return acc;
+    }, []);
+}
 
-// ── Published blog articles ───────────────────────────────────────────────────
-var blogUrls = [];
-if (fs.existsSync(ARTICLES_DIR)) {
-  var files = fs.readdirSync(ARTICLES_DIR).filter(function(f) { return f.endsWith('.js'); });
-  files.forEach(function(file) {
-    var raw         = fs.readFileSync(path.join(ARTICLES_DIR, file), 'utf8');
-    var slugMatch   = raw.match(/slug:\s*'([^']*)'/);
-    var statusMatch = raw.match(/status:\s*'([^']*)'/);
-    var dateMatch   = raw.match(/publishDate:\s*'([^']*)'/);
-    if (slugMatch && statusMatch && statusMatch[1] === 'published') {
-      blogUrls.push({
-        loc:        '/blog/' + slugMatch[1],
-        lastmod:    dateMatch ? dateMatch[1] : today,
-        priority:   '0.8',
-        changefreq: 'weekly',
-      });
+// Keep this list in sync with App.jsx's public routes and the
+// SNAPSHOT_ROUTES map in prerender-proxy/index.ts.
+// Blog article routes are appended dynamically — no manual edits needed.
+var ROUTES = [
+  { path: '/',                       key: 'home.html' },
+  { path: '/pricing',                key: 'pricing.html' },
+  { path: '/authority-engine',       key: 'authority-engine.html' },
+  { path: '/score',                  key: 'score.html' },
+  { path: '/voice-studio',           key: 'voice-studio.html' },
+  { path: '/geo-audit',              key: 'geo-audit.html' },
+  { path: '/linkedin-post-analyzer', key: 'linkedin-post-analyzer.html' },
+  { path: '/about',                  key: 'about.html' },
+  { path: '/contact',                key: 'contact.html' },
+  { path: '/blog',                   key: 'blog.html' },
+].concat(getBlogRoutes());
+
+async function main() {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+    console.error('Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY env vars.');
+    process.exit(1);
+  }
+
+  console.log('Routes to snapshot: ' + ROUTES.length);
+  ROUTES.forEach(function(r) { console.log('  ' + r.path); });
+
+  const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+  const browser  = await chromium.launch();
+  const page     = await browser.newPage();
+
+  let successCount = 0;
+  let failCount    = 0;
+
+  for (const route of ROUTES) {
+    const url = SITE_BASE_URL + route.path;
+    try {
+      console.log('Rendering', url);
+      await page.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
+      // Give react-helmet and any async data fetches a moment to settle
+      // beyond networkidle (charts/animations can trail slightly).
+      await page.waitForTimeout(1500);
+      const html = await page.content();
+
+      const { error } = await supabase.storage
+        .from(SNAPSHOT_BUCKET)
+        .upload(route.key, html, {
+          contentType: 'text/html; charset=utf-8',
+          upsert: true,
+        });
+
+      if (error) {
+        console.error('Upload failed for', route.key, error.message);
+        failCount++;
+      } else {
+        console.log('Snapshot saved:', route.key, '(' + html.length + ' chars)');
+        successCount++;
+      }
+    } catch (err) {
+      console.error('Render failed for', url, err.message);
+      failCount++;
     }
-  });
-  // Sort by publish date descending
-  blogUrls.sort(function(a, b) {
-    if (b.lastmod > a.lastmod) return 1;
-    if (b.lastmod < a.lastmod) return -1;
-    return 0;
-  });
+  }
+
+  await browser.close();
+  console.log('Done. ' + successCount + ' succeeded, ' + failCount + ' failed.');
+  if (failCount > 0) process.exit(1);
 }
 
-// ── Build XML ─────────────────────────────────────────────────────────────────
-function urlEntry(u) {
-  return [
-    '  <url>',
-    '    <loc>' + SITE_BASE_URL + u.loc + '</loc>',
-    '    <lastmod>' + (u.lastmod || today) + '</lastmod>',
-    '    <changefreq>' + u.changefreq + '</changefreq>',
-    '    <priority>' + u.priority + '</priority>',
-    '  </url>',
-  ].join('\n');
-}
-
-var allEntries = staticUrls.map(urlEntry).concat(blogUrls.map(urlEntry));
-
-var xml = '<?xml version="1.0" encoding="UTF-8"?>\n'
-  + '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
-  + allEntries.join('\n')
-  + '\n</urlset>\n';
-
-fs.writeFileSync(SITEMAP_PATH, xml, 'utf8');
-
-console.log('sitemap.xml written to: ' + SITEMAP_PATH);
-console.log('  Static URLs:  ' + staticUrls.length);
-console.log('  Article URLs: ' + blogUrls.length);
-console.log('  Total:        ' + (staticUrls.length + blogUrls.length));
+main();
