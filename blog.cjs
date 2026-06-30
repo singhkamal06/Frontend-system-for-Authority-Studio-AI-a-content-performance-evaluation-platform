@@ -31,7 +31,7 @@ const BLOG_DATA_PATH    = path.join(__dirname, 'blogData.js');
 const TOPIC_QUEUE_PATH  = path.join(__dirname, 'topic-queue.json');
 const SITE_BASE_URL     = 'https://authoritystudioai.com';
 const AUTHOR_DEFAULT    = 'Authority Studio AI';
-const MIN_WORD_COUNT    = 1000;
+const MIN_WORD_COUNT    = 1100;
 
 // ─── Guards ──────────────────────────────────────────────────────────────────
 
@@ -143,6 +143,19 @@ async function cmdNew(topic, auto) {
     process.exit(1);
   }
 
+  // ── Step 1b: Guard against duplicate target query (different slug, same topic) ──
+  const existingTargets = collectExistingTargetQueries();
+  const normalizedNewTarget = normalizeQuery(plan.targetQuery || topic);
+  for (const existing of existingTargets) {
+    if (normalizeQuery(existing.targetQuery) === normalizedNewTarget) {
+      console.error(`❌  Duplicate target query detected.`);
+      console.error(`    New article targets: "${plan.targetQuery}"`);
+      console.error(`    Already covered by:  blog/articles/${existing.slug}.js`);
+      console.error('    Remove this topic from topic-queue.json or choose a different angle.\n');
+      process.exit(1);
+    }
+  }
+
   // ── Step 2: Show plan for review ──────────────────────────────────────────
   console.log('── Article Plan ────────────────────────────────────────────\n');
   console.log(`  Slug:        ${plan.slug}`);
@@ -215,17 +228,14 @@ async function cmdNew(topic, auto) {
   // ── Step 7: Register in blogData.js index ─────────────────────────────────
   registerInIndex(slug);
 
-  // ── Step 8: Auto mode → go straight to publish ───────────────────────────
-  if (auto) {
-    console.log('\n⚡  Auto mode — publishing immediately...\n');
-    await cmdPublish(slug, true);
-  } else {
-    console.log('\n── Next steps ───────────────────────────────────────────────');
-    console.log(`  1. Review:   blog/articles/${slug}.js`);
-    console.log(`  2. Publish:  node blog.cjs --publish ${slug}`);
-    console.log(`  3. After publish: trigger generate-snapshots workflow in GitHub Actions`);
-    console.log(`  4. Then:     Request indexing in GSC for ${SITE_BASE_URL}/blog/${slug}\n`);
-  }
+  // ── Step 8: Auto mode still requires manual --publish ────────────────────
+  // Auto mode generates the draft and opens a PR (handled by the GitHub Action).
+  // It must NEVER auto-publish — quality review always happens in the PR.
+  console.log('\n── Next steps ───────────────────────────────────────────────');
+  console.log(`  1. Review:   blog/articles/${slug}.js`);
+  console.log(`  2. Publish:  node blog.cjs --publish ${slug}`);
+  console.log(`  3. After publish: trigger generate-snapshots workflow in GitHub Actions`);
+  console.log(`  4. Then:     Request indexing in GSC for ${SITE_BASE_URL}/blog/${slug}\n`);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -377,17 +387,31 @@ Internal link hrefs must be from this list only: /, /pricing, /authority-engine,
 function systemPromptWriter() {
   return `You are a world-class B2B content writer for Authority Studio AI. You write authoritative, specific, practical articles for LinkedIn professionals — founders, consultants, ghostwriters, executives.
 
-Writing rules — enforce every one:
-1. Open with a specific, contestable claim. Never a question. Never "In today's world" or "In the age of AI".
-2. Every section must include at least one concrete example, named mechanism, or specific data point.
-3. Reference Authority Studio AI naturally where relevant — never as an advertisement. It earns its place by solving a specific problem mentioned in the article.
-4. Target the specified search query in the first 100 words and naturally throughout.
-5. No filler transitions: no "Furthermore", "In conclusion", "It's worth noting", "In today's landscape".
-6. End with a specific, actionable next step — not "start your journey today".
-7. Write in a direct, expert voice. Short sentences. Specific claims. No hedging.
-8. Minimum 1000 words. Quality over padding — every paragraph must earn its place.
-9. Format with clear H2 subheadings matching the approved outline. No H1 — that is the article title.
-10. Do not use markdown code blocks. Use plain markdown headings (##) and paragraphs only.`;
+Writing rules — enforce every one, no exceptions:
+
+1. Open with a specific, contestable claim — a sentence someone could disagree with. Never a definition. Never "X represents a measure of Y." Never a question. Never "In today's world" or "In the age of AI."
+
+2. Every section must contain at least one of: a specific number, a named mechanism/framework, or a concrete before/after example. Generic statements like "engagement matters" or "quality content performs better" are FORBIDDEN without a specific number or named example attached in the same paragraph.
+
+3. NEVER use vague intensifiers or filler hedges: "significantly," "various factors," "a range of," "essential," "crucial," "imagine," "akin to," "represents a measure of." If you catch yourself writing one of these, replace the sentence with a specific claim instead.
+
+4. Reference Authority Studio AI naturally — it earns its place by solving a specific problem stated earlier in the same paragraph, not as a generic plug.
+
+5. Target the specified search query in the first 60 words, naturally.
+
+6. No filler transitions: no "Furthermore," "In conclusion," "It's worth noting," "Moreover," "In today's landscape."
+
+7. End with one specific, actionable next step a reader can do in the next 10 minutes — not "start your journey" or "begin optimizing today."
+
+8. Write in a direct, expert voice. Short sentences. No hedging language ("can help," "may improve," "tends to"). State things directly: "this does X," not "this can help with X."
+
+9. Minimum 1100 words. Every paragraph must contain a specific claim, number, or example — if a paragraph could apply to any company in any industry, delete it and replace it with a paragraph that could only be about this specific topic.
+
+10. Format with clear H2 subheadings matching the approved outline. No H1.
+
+11. Do not use markdown code blocks. Use plain markdown headings (##) and paragraphs.
+
+12. Before finishing, mentally check: does the article contain at least 5 specific numbers, named mechanisms, or concrete examples total? If not, it fails the quality bar — keep revising mentally until it does, then output the final version only.`;
 }
 
 function buildWriterPrompt(plan) {
@@ -505,6 +529,28 @@ async function maybeTrigerSnapshot(slug) {
 }
 
 // ─── Utility ─────────────────────────────────────────────────────────────────
+
+function collectExistingTargetQueries() {
+  if (!fs.existsSync(ARTICLES_DIR)) return [];
+  const files = fs.readdirSync(ARTICLES_DIR).filter(f => f.endsWith('.js'));
+  return files.map(file => {
+    const raw = fs.readFileSync(path.join(ARTICLES_DIR, file), 'utf8');
+    return {
+      slug: extractField(raw, 'slug'),
+      targetQuery: extractField(raw, 'targetQuery'),
+    };
+  }).filter(a => a.targetQuery);
+}
+
+function normalizeQuery(q) {
+  return (q || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, '')
+    .split(/\s+/)
+    .filter(Boolean)
+    .sort()
+    .join(' ');
+}
 
 function slugToVar(slug) {
   // linkedin-authority-score → articleLinkedinAuthorityScore
