@@ -15,7 +15,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
       # ── Step 1: Regenerate sitemap from published articles ─────────────────
       # Runs before Playwright so Googlebot gets the fresh sitemap immediately.
