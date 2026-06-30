@@ -20,6 +20,10 @@ on:
     - cron: '0 9 * * 1'   # Every Monday 09:00 UTC
   workflow_dispatch: {}    # Manual trigger from GitHub Actions tab anytime
 
+permissions:
+  contents: write
+  pull-requests: write
+
 jobs:
   generate-draft:
     runs-on: ubuntu-latest
