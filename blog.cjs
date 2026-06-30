@@ -201,7 +201,7 @@ async function cmdNew(topic, auto) {
     const sectionBody = await generateSection({
       plan,
       sectionLabel: `Section ${i + 1}: ${heading}`,
-      instruction: `Write the full section for the heading "## ${heading}". 180-230 words. Include the heading line itself. Develop one named mechanism, framework, or fully worked example in detail — do not summarize it in one sentence. Do not invent statistics or percentages. Do not use filler transitions.`,
+      instruction: `Write the full section for the heading "## ${heading}". 180-230 words. Include the heading line itself. Develop the idea using either a real Authority Studio AI concept (one of: the five scoring dimensions, Voice DNA, GEO Readiness, Evidence Intelligence, Personal-Best RAG, the Authority Engine, the LinkedIn Post Analyzer) or a fully worked hypothetical scenario — do not invent a new framework, matrix, or methodology name. Do not invent statistics, percentages, or specific cultural/geographic claims. Do not use filler transitions.`,
       minWords: 160,
     });
     sections.push(sectionBody);
@@ -431,7 +431,11 @@ Rules that apply to every piece you write:
 
 6. Plain text or markdown paragraph only — no markdown code blocks, no extra commentary about what you're doing, just the requested content.
 
-7. Hit the word count range given in the instruction. If a section is given 180-230 words, do not stop at 90 — develop the named mechanism or example fully with concrete, specific detail until you reach the target.`;
+7. When you need a named mechanism, use ONLY real Authority Studio AI concepts from this list — never invent a new framework name: the five scoring dimensions (Hook Strength, Clarity, Authority Depth, Retention, Originality), Voice DNA, GEO Readiness, Evidence Intelligence, Personal-Best RAG, the Authority Engine, the LinkedIn Post Analyzer. If a section's topic does not naturally connect to one of these, develop a fully worked hypothetical scenario instead (e.g. "Consider a consultant who posts twice a week about pricing strategy...") rather than naming a framework that does not exist. Never invent a methodology name, a matrix, a formula, or a "framework" that is not in this list.
+
+8. Never state specific cultural, geographic, or industry claims as fact unless they are generic and uncontroversial. "B2B buyers research vendors on LinkedIn" is fine. "Executives in Tokyo prefer a more formal tone" is not — it is an invented specific claim with no basis.
+
+9. Hit the word count range given in the instruction. If a section is given 180-230 words, do not stop at 90 — develop the worked scenario fully with concrete, specific detail until you reach the target.`;
 }
 function buildArticleFile(article) {
   // Escape backticks and template literal syntax in body
