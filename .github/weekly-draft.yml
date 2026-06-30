@@ -1,0 +1,167 @@
+# .github/workflows/weekly-draft.yml
+#
+# Runs every Monday at 09:00 UTC.
+# Pops the first topic from topic-queue.json, generates a full article draft,
+# and opens a Pull Request for your review.
+#
+# You review the PR, edit if needed, merge when satisfied.
+# The nightly generate-snapshots workflow picks it up automatically after merge.
+#
+# Required GitHub secrets:
+#   OPENAI_API_KEY          — already in your stack
+#
+# Optional (enables auto-trigger of snapshot workflow on publish):
+#   GITHUB_TOKEN            — automatically available in Actions, no setup needed
+
+name: Weekly Blog Draft
+
+on:
+  schedule:
+    - cron: '0 9 * * 1'   # Every Monday 09:00 UTC
+  workflow_dispatch: {}    # Manual trigger from GitHub Actions tab anytime
+
+jobs:
+  generate-draft:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Check topic queue
+        id: queue-check
+        run: |
+          if [ ! -f topic-queue.json ]; then
+            echo "topic-queue.json not found"
+            exit 1
+          fi
+          QUEUE_LENGTH=$(node -e "const q = require('./topic-queue.json'); console.log(q.length);")
+          echo "queue_length=$QUEUE_LENGTH" >> $GITHUB_OUTPUT
+          if [ "$QUEUE_LENGTH" -eq "0" ]; then
+            echo "empty=true" >> $GITHUB_OUTPUT
+          else
+            echo "empty=false" >> $GITHUB_OUTPUT
+            TOPIC=$(node -e "const q = require('./topic-queue.json'); console.log(q[0]);")
+            echo "topic=$TOPIC" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Skip if queue empty
+        if: steps.queue-check.outputs.empty == 'true'
+        run: echo "Queue is empty. Add topics to topic-queue.json and re-run."
+
+      - name: Generate article draft
+        if: steps.queue-check.outputs.empty == 'false'
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          TOPIC="${{ steps.queue-check.outputs.topic }}"
+          echo "Generating draft for: $TOPIC"
+          node blog.cjs --new "$TOPIC" --auto
+
+      - name: Pop topic from queue
+        if: steps.queue-check.outputs.empty == 'false'
+        run: |
+          node -e "
+            const fs = require('fs');
+            const q = JSON.parse(fs.readFileSync('topic-queue.json', 'utf8'));
+            q.shift();
+            fs.writeFileSync('topic-queue.json', JSON.stringify(q, null, 2));
+            console.log('Remaining topics in queue:', q.length);
+          "
+
+      - name: Get generated slug
+        if: steps.queue-check.outputs.empty == 'false'
+        id: get-slug
+        run: |
+          SLUG=$(ls -t blog/articles/*.js 2>/dev/null | head -1 | xargs basename | sed 's/\.js$//')
+          echo "slug=$SLUG" >> $GITHUB_OUTPUT
+          echo "Generated slug: $SLUG"
+
+      - name: Extract article metadata
+        if: steps.queue-check.outputs.empty == 'false'
+        id: meta
+        run: |
+          SLUG="${{ steps.get-slug.outputs.slug }}"
+          TITLE=$(node -e "const raw=require('fs').readFileSync('blog/articles/${SLUG}.js','utf8'); const m=raw.match(/title:\s*'([^']*)'/); console.log(m?m[1]:'${SLUG}');")
+          META_DESC=$(node -e "const raw=require('fs').readFileSync('blog/articles/${SLUG}.js','utf8'); const m=raw.match(/metaDescription:\s*'([^']*)'/); console.log(m?m[1]:'');")
+          TARGET_QUERY=$(node -e "const raw=require('fs').readFileSync('blog/articles/${SLUG}.js','utf8'); const m=raw.match(/targetQuery:\s*'([^']*)'/); console.log(m?m[1]:'');")
+          EXCERPT=$(node -e "const raw=require('fs').readFileSync('blog/articles/${SLUG}.js','utf8'); const m=raw.match(/excerpt:\s*'([^']*)'/); console.log(m?m[1]:'');")
+          {
+            echo "title<<EOF"
+            echo "$TITLE"
+            echo "EOF"
+            echo "meta_desc<<EOF"
+            echo "$META_DESC"
+            echo "EOF"
+            echo "target_query<<EOF"
+            echo "$TARGET_QUERY"
+            echo "EOF"
+            echo "excerpt<<EOF"
+            echo "$EXCERPT"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create draft branch and PR
+        if: steps.queue-check.outputs.empty == 'false'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SLUG: ${{ steps.get-slug.outputs.slug }}
+          TITLE: ${{ steps.meta.outputs.title }}
+          META_DESC: ${{ steps.meta.outputs.meta_desc }}
+          TARGET_QUERY: ${{ steps.meta.outputs.target_query }}
+          EXCERPT: ${{ steps.meta.outputs.excerpt }}
+        run: |
+          BRANCH="draft/blog-${SLUG}-$(date +%Y%m%d)"
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git checkout -b "$BRANCH"
+          git add blog/articles/ blogData.js topic-queue.json
+          git commit -m "Draft: blog article - ${SLUG}"
+          git push origin "$BRANCH"
+
+          {
+            echo "## Article Draft - Review Before Merging"
+            echo ""
+            echo "Slug: ${SLUG}"
+            echo "Target query: ${TARGET_QUERY}"
+            echo "Meta title: ${TITLE}"
+            echo "Meta description: ${META_DESC}"
+            echo ""
+            echo "Excerpt:"
+            echo "${EXCERPT}"
+            echo ""
+            echo "---"
+            echo ""
+            echo "## Review checklist"
+            echo ""
+            echo "- [ ] Opening paragraph makes a specific, contestable claim"
+            echo "- [ ] Target query appears naturally in the first 100 words"
+            echo "- [ ] At least one named mechanism or concrete example per section"
+            echo "- [ ] Authority Studio AI referenced naturally - not as an ad"
+            echo "- [ ] No filler transitions"
+            echo "- [ ] Ends with a specific actionable next step"
+            echo "- [ ] Read the full article - edit directly in this PR if needed"
+            echo ""
+            echo "## After merging"
+            echo ""
+            echo "The nightly generate-snapshots workflow will pre-render /blog/${SLUG} automatically."
+            echo "Then request indexing in GSC: https://authoritystudioai.com/blog/${SLUG}"
+            echo ""
+            echo "Article file: blog/articles/${SLUG}.js"
+            echo "Live URL (after merge + snapshot): https://authoritystudioai.com/blog/${SLUG}"
+          } > pr_body.md
+
+          gh pr create \
+            --title "Draft: ${TITLE}" \
+            --body-file pr_body.md \
+            --base main \
+            --head "$BRANCH"
+
+          echo "Pull Request created for review."
