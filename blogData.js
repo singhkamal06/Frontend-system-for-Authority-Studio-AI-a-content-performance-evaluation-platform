@@ -8,7 +8,10 @@ import articleHowToBuildLinkedinAuthorityFromZero from './blog/articles/how-to-b
 
 import articleLinkedinAuthorityAnalysisServiceGuide from './blog/articles/linkedin-authority-analysis-service-guide.js';
 
+import articleAuthorityLabsVsAuthorityStudioAiComparison from './blog/articles/authority-labs-vs-authority-studio-ai-comparison.js';
+
 var articles = [
+  articleAuthorityLabsVsAuthorityStudioAiComparison,
   articleLinkedinAuthorityAnalysisServiceGuide,
   articleWhatIsALinkedinAuthorityScore,
   articleLinkedinPostAnalyzerToolsCompared,
